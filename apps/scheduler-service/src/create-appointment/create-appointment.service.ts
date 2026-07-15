@@ -42,7 +42,7 @@ const LUNCH_START_HOUR = 12;
 const LUNCH_END_HOUR = 13;
 const LUNCH_DURATION_MINUTES = 60;
 
-interface BookSlotParams {
+export interface BookSlotParams {
   vehicleId: string;
   dealershipId: string;
   workshopServiceId: string;
@@ -231,8 +231,88 @@ export class CreateAppointmentService {
    * @throws ALREADY_EXISTS (NO_AVAILABILITY) if no ServiceBay or Technician is available for the requested slot.
    * @throws ABORTED if the DB-level EXCLUDE constraint catches a conflict that slipped past the row locks.
    */
-  async bookAppointmentSlot(_params: BookSlotParams): Promise<WorkshopServiceScheduleRow> {
-    throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
+  async bookAppointmentSlot(params: BookSlotParams): Promise<WorkshopServiceScheduleRow> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Lock a candidate ServiceBay — NOT EXISTS overlap check uses half-open interval
+      // (StartTime < end AND EndTime > start), so two appointments that exactly touch do not conflict.
+      // NOT EXISTS is used rather than NOT IN because NOT IN behaves unexpectedly when the subquery returns NULLs.
+      const bayResult = await client.query<{ Id: string }>(
+        `SELECT "Id" FROM "ServiceBay" sb
+         WHERE sb."DealershipId" = $1
+           AND sb."IsActive" = true
+           AND NOT EXISTS (
+             SELECT 1 FROM "WorkshopServiceSchedule" wss
+             WHERE wss."ServiceBayId" = sb."Id"
+               AND wss."StartTime" < $3 AND wss."EndTime" > $2
+           )
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1`,
+        [params.dealershipId, params.startTime, params.endTime],
+      );
+      if (bayResult.rows.length === 0) {
+        throw new RpcException({ code: status.ALREADY_EXISTS, message: 'NO_AVAILABILITY: no service bay available' });
+      }
+      const bayId = bayResult.rows[0].Id;
+
+      // Lock a candidate Technician — same overlap pattern, additionally filtered by TechLevel
+      const techResult = await client.query<{ Id: string }>(
+        `SELECT "Id" FROM "Technician" t
+         WHERE t."DealershipId" = $1
+           AND t."IsActive" = true
+           AND t."TechLevel" >= $4
+           AND NOT EXISTS (
+             SELECT 1 FROM "WorkshopServiceSchedule" wss
+             WHERE wss."TechnicianId" = t."Id"
+               AND wss."StartTime" < $3 AND wss."EndTime" > $2
+           )
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1`,
+        [params.dealershipId, params.startTime, params.endTime, params.requiredTechLevel],
+      );
+      if (techResult.rows.length === 0) {
+        throw new RpcException({ code: status.ALREADY_EXISTS, message: 'NO_AVAILABILITY: no technician available' });
+      }
+      const technicianId = techResult.rows[0].Id;
+
+      // Insert the WorkshopServiceSchedule row; Id and CreatedAt are DB-generated
+      const insertResult = await client.query<WorkshopServiceScheduleRow>(
+        `INSERT INTO "WorkshopServiceSchedule" (
+           "VehicleId", "DealershipId", "WorkshopServiceId", "ServiceBayId", "TechnicianId",
+           "StartTime", "EndTime", "RequestedUserId", "Status"
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'CONFIRMED')
+         RETURNING *`,
+        [
+          params.vehicleId,
+          params.dealershipId,
+          params.workshopServiceId,
+          bayId,
+          technicianId,
+          params.startTime,
+          params.endTime,
+          params.requestedUserId,
+        ],
+      );
+
+      await client.query('COMMIT');
+      return insertResult.rows[0];
+
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+
+      if (err instanceof RpcException) throw err;
+
+      // EXCLUDE constraint violation — a conflicting row slipped past the app-level locks
+      if ((err as { code?: string }).code === '23P01') {
+        throw new RpcException({ code: status.ABORTED, message: 'booking conflict caught by DB EXCLUDE constraint' });
+      }
+
+      throw new RpcException({ code: status.INTERNAL, message: 'unexpected database error' });
+    } finally {
+      client.release();
+    }
   }
 }
 
