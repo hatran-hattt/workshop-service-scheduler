@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { status } from '@grpc/grpc-js';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import {
   CreateAppointmentRequest,
   CreateAppointmentResponse,
@@ -32,6 +32,7 @@ export interface WorkshopServiceScheduleRow {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NETWORK_ERROR_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET']);
 
 const SLOT_MINUTES = 15;
 const BOOKING_BUFFER_MINUTES = 15;
@@ -232,8 +233,9 @@ export class CreateAppointmentService {
    * @throws ABORTED if the DB-level EXCLUDE constraint catches a conflict that slipped past the row locks.
    */
   async bookAppointmentSlot(params: BookSlotParams): Promise<WorkshopServiceScheduleRow> {
-    const client = await this.pool.connect();
+    let client: PoolClient | undefined;
     try {
+      client = await this.pool.connect();
       await client.query('BEGIN');
 
       // Lock a candidate ServiceBay — NOT EXISTS overlap check uses half-open interval
@@ -300,7 +302,7 @@ export class CreateAppointmentService {
       return insertResult.rows[0];
 
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (client) await client.query('ROLLBACK').catch(() => {});
 
       if (err instanceof RpcException) throw err;
 
@@ -309,9 +311,14 @@ export class CreateAppointmentService {
         throw new RpcException({ code: status.ABORTED, message: 'booking conflict caught by DB EXCLUDE constraint' });
       }
 
+      // Node-level network errors mean the data layer is unreachable — retryable by the gateway
+      if (NETWORK_ERROR_CODES.has((err as { code?: string }).code ?? '')) {
+        throw new RpcException({ code: status.UNAVAILABLE, message: 'database unavailable' });
+      }
+
       throw new RpcException({ code: status.INTERNAL, message: 'unexpected database error' });
     } finally {
-      client.release();
+      client?.release();
     }
   }
 }
@@ -325,7 +332,7 @@ function fromDate(date: Date): { seconds: number; nanos: number } {
   return { seconds: Math.floor(ms / 1000), nanos: (ms % 1000) * 1_000_000 };
 }
 
-function mapToResponse(row: WorkshopServiceScheduleRow): CreateAppointmentResponse {
+export function mapToResponse(row: WorkshopServiceScheduleRow): CreateAppointmentResponse {
   return {
     appointment: {
       id: row.Id,

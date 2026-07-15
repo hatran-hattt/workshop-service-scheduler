@@ -52,19 +52,40 @@
  *     - raw end spans lunch, extension pushes end_time to 18:01 (fails)
  *     - workshop_service_id not found in WorkshopService table
  *     - workshop service exists but IsActive = false
+ *
+ * mapToResponse (DD Section 2.3 — Step 4)
+ *   Success
+ *     - maps all WorkshopServiceScheduleRow fields to correct CreateAppointmentResponse shape
+ *     - start_time, end_time, created_at converted to proto Timestamp {seconds, nanos}
+ *     - lunch-adjusted end_time (13:01 UTC) correctly reflected in response
+ *
+ * execute() — error propagation (DD Section 2.3 status code table)
+ *   - INVALID_ARGUMENT propagates from validateFormat
+ *   - NOT_FOUND propagates from validateExistenceAndOwnership
+ *   - PERMISSION_DENIED propagates from validateExistenceAndOwnership
+ *   - INVALID_ARGUMENT propagates from validateTimeWindowAndComputeEndTime
+ *   - ALREADY_EXISTS propagates from bookAppointmentSlot
+ *   - ABORTED propagates from bookAppointmentSlot
+ *   - UNAVAILABLE when DB is unreachable (ECONNREFUSED on pool.connect)
+ *   - INTERNAL for unexpected DB error
  */
 
 import { RpcException } from '@nestjs/microservices';
 import { status } from '@grpc/grpc-js';
-import { CreateAppointmentService } from './create-appointment.service';
+import {
+  CreateAppointmentService,
+  WorkshopServiceRow,
+  WorkshopServiceScheduleRow,
+  mapToResponse,
+} from './create-appointment.service';
 import { CreateAppointmentRequest } from '../scheduler.types';
 
 describe('CreateAppointmentService', () => {
   let service: CreateAppointmentService;
-  let mockPool: { query: jest.Mock };
+  let mockPool: { query: jest.Mock; connect: jest.Mock };
 
   beforeEach(() => {
-    mockPool = { query: jest.fn() };
+    mockPool = { query: jest.fn(), connect: jest.fn() };
     service = new CreateAppointmentService(mockPool as any);
   });
 
@@ -318,6 +339,150 @@ describe('CreateAppointmentService', () => {
         // start 09:00 + 481 min = 17:01 raw; 17:01 > 12:00 → extend +60 → 18:01 > 18:00 → fails
         expectInvalidArgument(new Date('2024-01-15T09:00:00.000Z'), 481);
       });
+    });
+  });
+
+  // ─── mapToResponse ────────────────────────────────────────────────────────
+
+  describe('mapToResponse', () => {
+    const ROW: WorkshopServiceScheduleRow = {
+      Id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      VehicleId: '50000000-0000-0000-0000-000000000001',
+      DealershipId: '10000000-0000-0000-0000-000000000001',
+      WorkshopServiceId: '40000000-0000-0000-0000-000000000001',
+      ServiceBayId: '20000000-0000-0000-0000-000000000001',
+      TechnicianId: '30000000-0000-0000-0000-000000000001',
+      StartTime: new Date('2030-06-15T09:00:00.000Z'),
+      EndTime: new Date('2030-06-15T09:45:00.000Z'),
+      RequestedUserId: 'user-001',
+      Status: 'CONFIRMED',
+      CreatedAt: new Date('2030-06-15T08:00:00.000Z'),
+    };
+
+    it('maps all row fields to the correct CreateAppointmentResponse shape', () => {
+      const response = mapToResponse(ROW);
+      expect(response.appointment).toMatchObject({
+        id: ROW.Id,
+        vehicle_id: ROW.VehicleId,
+        dealership_id: ROW.DealershipId,
+        workshop_service_id: ROW.WorkshopServiceId,
+        service_bay_id: ROW.ServiceBayId,
+        technician_id: ROW.TechnicianId,
+        status: 'APPOINTMENT_STATUS_CONFIRMED',
+      });
+    });
+
+    it('converts start_time, end_time, and created_at to proto Timestamp {seconds, nanos}', () => {
+      const response = mapToResponse(ROW);
+      const toProtoTs = (d: Date) => ({
+        seconds: Math.floor(d.getTime() / 1000),
+        nanos: (d.getTime() % 1000) * 1_000_000,
+      });
+      expect(response.appointment.start_time).toEqual(toProtoTs(ROW.StartTime));
+      expect(response.appointment.end_time).toEqual(toProtoTs(ROW.EndTime));
+      expect(response.appointment.created_at).toEqual(toProtoTs(ROW.CreatedAt));
+    });
+
+    it('correctly reflects a lunch-adjusted end_time (13:01 UTC) in the response', () => {
+      // validateTimeWindowAndComputeEndTime extends raw end through the 12:00–13:00 break;
+      // mapToResponse must faithfully echo whatever EndTime the DB row carries.
+      const lunchAdjustedEnd = new Date('2030-06-15T13:01:00.000Z');
+      const response = mapToResponse({ ...ROW, EndTime: lunchAdjustedEnd });
+      expect(response.appointment.end_time).toEqual({
+        seconds: Math.floor(lunchAdjustedEnd.getTime() / 1000),
+        nanos: 0,
+      });
+    });
+  });
+
+  // ─── execute() — error propagation ────────────────────────────────────────
+
+  describe('execute() — error propagation (DD Section 2.3 status code table)', () => {
+    const VALID_REQ: CreateAppointmentRequest = {
+      vehicle_id: '00000000-0000-0000-0000-000000000001',
+      dealership_id: '00000000-0000-0000-0000-000000000002',
+      workshop_service_id: '00000000-0000-0000-0000-000000000003',
+      start_time: { seconds: 9_999_999_999, nanos: 0 },
+      requested_user_id: 'user-abc',
+    };
+
+    const MOCK_SERVICE_ROW: WorkshopServiceRow = { Id: '40000000-0000-0000-0000-000000000001', Duration: 45, RequiredTechLevel: 1 };
+
+    afterEach(() => jest.restoreAllMocks());
+
+    function stubEarlyStages(endTime: Date): void {
+      jest.spyOn(service, 'validateFormat').mockImplementation(() => {});
+      jest.spyOn(service, 'validateExistenceAndOwnership').mockResolvedValue(MOCK_SERVICE_ROW);
+      jest.spyOn(service, 'validateTimeWindowAndComputeEndTime').mockReturnValue(endTime);
+    }
+
+    async function expectRpcCode(fn: () => Promise<unknown>, code: number): Promise<void> {
+      let thrown: unknown;
+      try { await fn(); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(RpcException);
+      expect((thrown as RpcException).getError()).toMatchObject({ code });
+    }
+
+    it('propagates INVALID_ARGUMENT from validateFormat', async () => {
+      jest.spyOn(service, 'validateFormat').mockImplementation(() => {
+        throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'test' });
+      });
+      await expectRpcCode(() => service.execute(VALID_REQ), status.INVALID_ARGUMENT);
+    });
+
+    it('propagates NOT_FOUND from validateExistenceAndOwnership', async () => {
+      jest.spyOn(service, 'validateFormat').mockImplementation(() => {});
+      jest.spyOn(service, 'validateExistenceAndOwnership').mockRejectedValue(
+        new RpcException({ code: status.NOT_FOUND, message: 'test' }),
+      );
+      await expectRpcCode(() => service.execute(VALID_REQ), status.NOT_FOUND);
+    });
+
+    it('propagates PERMISSION_DENIED from validateExistenceAndOwnership', async () => {
+      jest.spyOn(service, 'validateFormat').mockImplementation(() => {});
+      jest.spyOn(service, 'validateExistenceAndOwnership').mockRejectedValue(
+        new RpcException({ code: status.PERMISSION_DENIED, message: 'test' }),
+      );
+      await expectRpcCode(() => service.execute(VALID_REQ), status.PERMISSION_DENIED);
+    });
+
+    it('propagates INVALID_ARGUMENT from validateTimeWindowAndComputeEndTime', async () => {
+      jest.spyOn(service, 'validateFormat').mockImplementation(() => {});
+      jest.spyOn(service, 'validateExistenceAndOwnership').mockResolvedValue(MOCK_SERVICE_ROW);
+      jest.spyOn(service, 'validateTimeWindowAndComputeEndTime').mockImplementation(() => {
+        throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'test' });
+      });
+      await expectRpcCode(() => service.execute(VALID_REQ), status.INVALID_ARGUMENT);
+    });
+
+    it('propagates ALREADY_EXISTS from bookAppointmentSlot', async () => {
+      stubEarlyStages(new Date('2030-06-15T09:45:00.000Z'));
+      jest.spyOn(service, 'bookAppointmentSlot').mockRejectedValue(
+        new RpcException({ code: status.ALREADY_EXISTS, message: 'NO_AVAILABILITY: no bay available' }),
+      );
+      await expectRpcCode(() => service.execute(VALID_REQ), status.ALREADY_EXISTS);
+    });
+
+    it('propagates ABORTED from bookAppointmentSlot', async () => {
+      stubEarlyStages(new Date('2030-06-15T09:45:00.000Z'));
+      jest.spyOn(service, 'bookAppointmentSlot').mockRejectedValue(
+        new RpcException({ code: status.ABORTED, message: 'booking conflict caught by DB EXCLUDE constraint' }),
+      );
+      await expectRpcCode(() => service.execute(VALID_REQ), status.ABORTED);
+    });
+
+    it('throws UNAVAILABLE when pool.connect fails with a network error (ECONNREFUSED)', async () => {
+      // Does NOT stub bookAppointmentSlot — exercises the real catch block in bookAppointmentSlot
+      // to confirm ECONNREFUSED on pool.connect() maps to UNAVAILABLE, not INTERNAL.
+      stubEarlyStages(new Date('2030-06-15T09:45:00.000Z'));
+      mockPool.connect.mockRejectedValue(Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+      await expectRpcCode(() => service.execute(VALID_REQ), status.UNAVAILABLE);
+    });
+
+    it('throws INTERNAL for an unexpected DB error', async () => {
+      stubEarlyStages(new Date('2030-06-15T09:45:00.000Z'));
+      mockPool.connect.mockRejectedValue(new Error('something unexpected'));
+      await expectRpcCode(() => service.execute(VALID_REQ), status.INTERNAL);
     });
   });
 });
