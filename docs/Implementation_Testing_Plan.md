@@ -33,7 +33,7 @@ Each numbered step below is meant to be independently reviewable — small enoug
   - Valid mid-morning slot, no lunch overlap.
   - Not aligned to a 15-min boundary.
   - Exactly 15 minutes from now (boundary) / 14 minutes from now (fails).
-  - Exactly 1 month out (boundary) / 1 month + 1 day (fails).
+  - Exactly 30 days out (boundary) / 30 days + 1 day (fails).
   - Start time falls inside the lunch window itself.
   - Duration pushes end time to exactly 12:00 (boundary — does *not* need extension) vs. 12:01 (needs extension).
   - Duration + lunch extension lands exactly at 18:00 (boundary — should pass) vs. 18:01 (fails).

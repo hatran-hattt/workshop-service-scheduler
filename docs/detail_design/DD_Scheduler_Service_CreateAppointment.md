@@ -107,7 +107,7 @@ Design convention: the gateway handles authentication and request-format validat
 | 7 | `workshop_service_id` must exist in `WorkshopService`, `IsActive = true` | `NOT_FOUND` |
 | 8 | `start_time` must align to a 15-minute slot boundary | `INVALID_ARGUMENT` |
 | 9 | `start_time` must be > 15 minutes from current time | `INVALID_ARGUMENT` |
-| 10 | `start_time` must fall within a date ≤ 1 month from today | `INVALID_ARGUMENT` |
+| 10 | `start_time` must fall within a date ≤ 30 days from today | `INVALID_ARGUMENT` |
 | 11 | `start_time` must not fall within the lunch break (12:00–13:00) | `INVALID_ARGUMENT` |
 | 12 | Computed `[start_time, end_time]` range must fall within business hours (09:00–18:00), after extending `end_time` past the lunch break if the raw calculation spans it | `INVALID_ARGUMENT` |
 

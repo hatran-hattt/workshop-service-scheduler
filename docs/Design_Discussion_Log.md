@@ -124,6 +124,14 @@ This document tracks the discussion points, open questions, and decisions made w
 
 ---
 
+## Phase 6 — Implementation
+
+| # | Topic | Raised By | Decision | Rationale | Decided By |
+|---|-------|-----------|----------|-----------|------------|
+| 82 | Code review of `validateTimeWindowAndComputeEndTime` found two bugs against the DDs: (1) rule 12 only checked the business-close bound (18:00), never the business-open bound (09:00), so a `start_time` in the middle of the night would incorrectly pass; (2) rule 10's "1 month from today" horizon, computed via JS `Date.setUTCMonth`, silently overflows past month-end (e.g. today Jan 31 → naive horizon Mar 2 instead of Feb 28/29), widening the booking window by a few days on the tail of longer months | AI (found during a requested code review of the function) | (1) fixed by adding an explicit `start_time >= 09:00` check alongside the existing close-bound check, both under rule 12. (2) initially patched with month-overflow clamping (detect the overflow, snap back to the target month's last day); candidate then asked to remove the ambiguity at its source instead — redefine rule 10 as a fixed 30-day window rather than a calendar month, and update `DesignDocument.md`'s "Start Date" input line and its note, and `DD_Scheduler_Service_CreateAppointment.md` rule 10, from "1 month" to "30 days" | Candidate's rationale: a fixed day-count window has no calendar-length ambiguity — no month-boundary clamping decision to make, no leap-year edge case — so it removes the whole bug class instead of patching around it | Candidate |
+
+---
+
 ## Summary of Currently Open / Unresolved Items
 
 These are called out here for visibility, since they were raised but not yet resolved with a specific decision as of the latest revision:

@@ -40,13 +40,15 @@
  *   Error — Rule 9: start_time too close to now
  *     - start_time exactly 15 minutes from now (boundary — fails, must be strictly >)
  *     - start_time less than 15 minutes from now
- *   Error — Rule 10: start_time beyond 1-month booking horizon
- *     - start_time exactly 1 month from today (boundary — passes)
- *     - start_time 1 month + 1 day from today (fails)
+ *   Error — Rule 10: start_time beyond 30-day booking horizon
+ *     - start_time exactly 30 days from today (boundary — passes)
+ *     - start_time 30 days + 1 day from today (fails)
  *   Error — Rule 11: start_time in lunch break
  *     - start_time at 12:00
  *     - start_time at 12:30
- *   Error — Rule 12: computed end_time exceeds business hours
+ *   Error — Rule 12: start_time or computed end_time outside business hours (09:00–18:00)
+ *     - start_time before business open (08:45, fails)
+ *     - start_time exactly at business open (09:00, boundary — passes)
  *     - raw end spans lunch, extension pushes end_time to 18:01 (fails)
  *     - workshop_service_id not found in WorkshopService table
  *     - workshop service exists but IsActive = false
@@ -278,16 +280,17 @@ describe('CreateAppointmentService', () => {
       });
     });
 
-    describe('Rule 10 — start_time must be within 1 month from today', () => {
-      it('passes when start_time is exactly 1 month from today (boundary)', () => {
+    describe('Rule 10 — start_time must be within 30 days from today', () => {
+      it('passes when start_time is exactly 30 days from today (boundary)', () => {
+        // today (00:00 UTC) 2024-01-14 + 30 days = 2024-02-13
         jest.setSystemTime(new Date('2024-01-14T08:00:00.000Z'));
-        const start = new Date('2024-02-14T09:00:00.000Z');
+        const start = new Date('2024-02-13T09:00:00.000Z');
         expect(() => service.validateTimeWindowAndComputeEndTime(start, 60)).not.toThrow();
       });
 
-      it('throws INVALID_ARGUMENT when start_time is 1 month + 1 day from today', () => {
+      it('throws INVALID_ARGUMENT when start_time is 30 days + 1 day from today', () => {
         jest.setSystemTime(new Date('2024-01-14T08:00:00.000Z'));
-        expectInvalidArgument(new Date('2024-02-15T09:00:00.000Z'), 60);
+        expectInvalidArgument(new Date('2024-02-14T09:00:00.000Z'), 60);
       });
     });
 
@@ -301,7 +304,16 @@ describe('CreateAppointmentService', () => {
       });
     });
 
-    describe('Rule 12 — computed end_time must not exceed business hours (18:00)', () => {
+    describe('Rule 12 — start_time or computed end_time outside business hours (09:00–18:00)', () => {
+      it('throws INVALID_ARGUMENT when start_time is before business open (08:45)', () => {
+        expectInvalidArgument(new Date('2024-01-15T08:45:00.000Z'), 60);
+      });
+
+      it('passes when start_time is exactly business open (09:00, boundary)', () => {
+        const start = new Date('2024-01-15T09:00:00.000Z');
+        expect(() => service.validateTimeWindowAndComputeEndTime(start, 60)).not.toThrow();
+      });
+
       it('throws INVALID_ARGUMENT when extension pushes end_time to 18:01', () => {
         // start 09:00 + 481 min = 17:01 raw; 17:01 > 12:00 → extend +60 → 18:01 > 18:00 → fails
         expectInvalidArgument(new Date('2024-01-15T09:00:00.000Z'), 481);
