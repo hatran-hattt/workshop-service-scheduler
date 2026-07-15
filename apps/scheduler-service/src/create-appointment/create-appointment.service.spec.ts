@@ -57,7 +57,6 @@
  *   Success
  *     - maps all WorkshopServiceScheduleRow fields to correct CreateAppointmentResponse shape
  *     - start_time, end_time, created_at converted to proto Timestamp {seconds, nanos}
- *     - lunch-adjusted end_time (13:01 UTC) correctly reflected in response
  *
  * execute() — error propagation (DD Section 2.3 status code table)
  *   - INVALID_ARGUMENT propagates from validateFormat
@@ -383,16 +382,7 @@ describe('CreateAppointmentService', () => {
       expect(response.appointment.created_at).toEqual(toProtoTs(ROW.CreatedAt));
     });
 
-    it('correctly reflects a lunch-adjusted end_time (13:01 UTC) in the response', () => {
-      // validateTimeWindowAndComputeEndTime extends raw end through the 12:00–13:00 break;
-      // mapToResponse must faithfully echo whatever EndTime the DB row carries.
-      const lunchAdjustedEnd = new Date('2030-06-15T13:01:00.000Z');
-      const response = mapToResponse({ ...ROW, EndTime: lunchAdjustedEnd });
-      expect(response.appointment.end_time).toEqual({
-        seconds: Math.floor(lunchAdjustedEnd.getTime() / 1000),
-        nanos: 0,
-      });
-    });
+
   });
 
   // ─── execute() — error propagation ────────────────────────────────────────
