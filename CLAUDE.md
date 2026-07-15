@@ -74,6 +74,16 @@ Mount this folder in `docker-compose.yml`; `docker compose up` on a fresh volume
 - **Casing bridges, not casing fixes.** DB columns are PascalCase, proto/JSON fields are snake_case (see Section 5's casing bullet) — that split is intentional and documented, not something to "clean up" into one style. Internal TypeScript variables/functions use normal camelCase; the mapping between the three happens at explicit boundary layers (SQL result mapping, DTO/proto (de)serialization), not by forcing one convention everywhere.
 - **Function granularity mirrors the DDs' own structure** — one function per validation-rule group (rules 1–3, 4–7, 8–12) and one per numbered step in Scheduler DD 3.3 / Gateway DD 2.7, rather than one large handler. This keeps code reviewable section-by-section against the DD, the same way the DD itself was structured for review.
 - **Named constants, not magic numbers/strings.** Business hours, the 15-minute slot/buffer, the 1-month window, the lunch-break duration, and every gRPC/HTTP status code should be defined once and referenced, not repeated as literals.
+- **Test files start with a top-level comment listing all test cases**, categorized by success/error and grouped by the function or rule being tested. This makes coverage scannable without opening the test body. Example structure:
+  ```
+  // validateFormat
+  //   Success
+  //     - valid request
+  //   Error — Rule 1: ID fields missing or malformed
+  //     - vehicle_id missing
+  //     - vehicle_id malformed
+  //   ...
+  ```
 - **Comments — function headers are short overviews; bodies are segmented.**
   - Every function gets a TSDoc `/** ... */` with a single-line overview of what the function does — no step lists, no rule numbers, no DD section pointers. Steps and details belong in the body, not the header.
   - Add `@throws <STATUS_CODE> <condition>` lines for every gRPC error the function can raise, using DD field names and status code names exactly (e.g. `@throws NOT_FOUND if vehicle_id, dealership_id, or workshop_service_id doesn't exist or IsActive = false`).

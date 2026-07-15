@@ -28,6 +28,8 @@ export interface WorkshopServiceScheduleRow {
   CreatedAt: Date;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface BookSlotParams {
   vehicleId: string;
   dealershipId: string;
@@ -76,8 +78,36 @@ export class CreateAppointmentService {
    * Validates format of all request fields.
    * @throws INVALID_ARGUMENT if any field is missing or malformed.
    */
-  validateFormat(_request: CreateAppointmentRequest): void {
-    throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
+  validateFormat(request: CreateAppointmentRequest): void {
+    // Rule 1 — vehicle_id, dealership_id, workshop_service_id must be present and valid UUID format
+    for (const [field, value] of [
+      ['vehicle_id', request.vehicle_id],
+      ['dealership_id', request.dealership_id],
+      ['workshop_service_id', request.workshop_service_id],
+    ] as [string, string][]) {
+      if (!value || !UUID_RE.test(value)) {
+        throw new RpcException({
+          code: status.INVALID_ARGUMENT,
+          message: `${field} must be a valid UUID`,
+        });
+      }
+    }
+
+    // Rule 2 — start_time must be present and a valid timestamp
+    if (!request.start_time || !isFinite(request.start_time.seconds)) {
+      throw new RpcException({
+        code: status.INVALID_ARGUMENT,
+        message: 'start_time must be present and a valid timestamp',
+      });
+    }
+
+    // Rule 3 — requested_user_id must be present
+    if (!request.requested_user_id) {
+      throw new RpcException({
+        code: status.INVALID_ARGUMENT,
+        message: 'requested_user_id must be present',
+      });
+    }
   }
 
   /**
