@@ -4,9 +4,8 @@ package scheduler;
 
 import "google/protobuf/timestamp.proto";
 
-// see docs/detail_design/DD_Scheduler_Service_CreateAppointment.md, Section 2.2
 service SchedulerService {
-  rpc CreateAppointment(CreateAppointmentRequest) returns (CreateAppointmentResponse);
+  rpc CreateAppointment (CreateAppointmentRequest) returns (CreateAppointmentResponse);
 }
 
 message CreateAppointmentRequest {
@@ -38,5 +37,3 @@ enum AppointmentStatus {
   APPOINTMENT_STATUS_UNSPECIFIED = 0;
   APPOINTMENT_STATUS_CONFIRMED = 1;
 }
-
-

@@ -6,14 +6,15 @@ import {
   CreateAppointmentResponse,
 } from '../scheduler.types';
 
-// Internal DB row shapes — PascalCase matches column names per the ERD.
+// Represents a row from the WorkshopService table. PascalCase matches DB column names per the ERD.
 export interface WorkshopServiceRow {
   Id: string;
   Duration: number;          // minutes
   RequiredTechLevel: number;
 }
 
-export interface AppointmentRow {
+// Represents a row from the WorkshopServiceSchedule table. PascalCase matches DB column names per the ERD.
+export interface WorkshopServiceScheduleRow {
   Id: string;
   WorkshopServiceId: string;
   DealershipId: string;
@@ -39,16 +40,25 @@ interface BookSlotParams {
 
 @Injectable()
 export class CreateAppointmentService {
+  /** Orchestrates the full CreateAppointment flow. */
   async execute(
     request: CreateAppointmentRequest,
   ): Promise<CreateAppointmentResponse> {
-    // see Scheduler Service DD, 3.3
+    // Step 1a — validate format (rules 1–3)
     this.validateFormat(request);
+
+    // Step 1b — validate existence and ownership (rules 4–7);
+    // WorkshopService row carries Duration and RequiredTechLevel for steps 2–3
     const workshopService = await this.validateExistenceAndOwnership(request);
+
+    // Step 2 — validate start_time window rules (rules 8–11) and compute end_time (rule 12)
     const endTime = this.validateTimeWindowAndComputeEndTime(
       toDate(request.start_time),
       workshopService.Duration,
     );
+
+    // Step 3 — open transaction: lock a candidate ServiceBay, lock a candidate Technician,
+    // insert WorkshopServiceSchedule row
     const row = await this.bookAppointmentSlot({
       vehicleId: request.vehicle_id,
       dealershipId: request.dealership_id,
@@ -58,31 +68,47 @@ export class CreateAppointmentService {
       requiredTechLevel: workshopService.RequiredTechLevel,
       requestedUserId: request.requested_user_id,
     });
+
     return mapToResponse(row);
   }
 
-  // see Scheduler Service DD, 3.2, rules 1–3
-  validateFormat(request: CreateAppointmentRequest): void {
+  /**
+   * Validates format of all request fields.
+   * @throws INVALID_ARGUMENT if any field is missing or malformed.
+   */
+  validateFormat(_request: CreateAppointmentRequest): void {
     throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
   }
 
-  // see Scheduler Service DD, 3.2, rules 4–7
+  /**
+   * Validates existence and ownership. Returns the WorkshopService
+   * row — Duration and RequiredTechLevel are needed for subsequent steps.
+   * @throws NOT_FOUND if vehicle_id, dealership_id, or workshop_service_id doesn't exist or IsActive = false.
+   * @throws PERMISSION_DENIED if vehicle_id does not belong to requested_user_id.
+   */
   async validateExistenceAndOwnership(
-    request: CreateAppointmentRequest,
+    _request: CreateAppointmentRequest,
   ): Promise<WorkshopServiceRow> {
     throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
   }
 
-  // see Scheduler Service DD, 3.3, step 2
+  /**
+   * Validates start_time window rules and computes end_time.
+   * @throws INVALID_ARGUMENT if any window rule fails.
+   */
   validateTimeWindowAndComputeEndTime(
-    startTime: Date,
-    durationMinutes: number,
+    _startTime: Date,
+    _durationMinutes: number,
   ): Date {
     throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
   }
 
-  // see Scheduler Service DD, 3.3, step 3
-  async bookAppointmentSlot(params: BookSlotParams): Promise<AppointmentRow> {
+  /**
+   * Atomically books an available ServiceBay and Technician slot.
+   * @throws ALREADY_EXISTS (NO_AVAILABILITY) if no ServiceBay or Technician is available for the requested slot.
+   * @throws ABORTED if the DB-level EXCLUDE constraint catches a conflict that slipped past the row locks.
+   */
+  async bookAppointmentSlot(_params: BookSlotParams): Promise<WorkshopServiceScheduleRow> {
     throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
   }
 }
@@ -96,7 +122,7 @@ function fromDate(date: Date): { seconds: number; nanos: number } {
   return { seconds: Math.floor(ms / 1000), nanos: (ms % 1000) * 1_000_000 };
 }
 
-function mapToResponse(row: AppointmentRow): CreateAppointmentResponse {
+function mapToResponse(row: WorkshopServiceScheduleRow): CreateAppointmentResponse {
   return {
     appointment: {
       id: row.Id,
