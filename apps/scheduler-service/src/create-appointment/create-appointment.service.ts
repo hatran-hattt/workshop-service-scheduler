@@ -1,10 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { status } from '@grpc/grpc-js';
+import { Pool } from 'pg';
 import {
   CreateAppointmentRequest,
   CreateAppointmentResponse,
 } from '../scheduler.types';
+
+export const PG_POOL = 'PG_POOL';
 
 // Represents a row from the WorkshopService table. PascalCase matches DB column names per the ERD.
 export interface WorkshopServiceRow {
@@ -42,6 +45,7 @@ interface BookSlotParams {
 
 @Injectable()
 export class CreateAppointmentService {
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
   /** Orchestrates the full CreateAppointment flow. */
   async execute(
     request: CreateAppointmentRequest,
@@ -117,9 +121,39 @@ export class CreateAppointmentService {
    * @throws PERMISSION_DENIED if vehicle_id does not belong to requested_user_id.
    */
   async validateExistenceAndOwnership(
-    _request: CreateAppointmentRequest,
+    request: CreateAppointmentRequest,
   ): Promise<WorkshopServiceRow> {
-    throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
+    // Rule 4 & 5 — vehicle_id must exist in Vehicle; CustomerId must match requested_user_id
+    const vehicleResult = await this.pool.query<{ CustomerId: string }>(
+      'SELECT "CustomerId" FROM "Vehicle" WHERE "Id" = $1',
+      [request.vehicle_id],
+    );
+    if (vehicleResult.rows.length === 0) {
+      throw new RpcException({ code: status.NOT_FOUND, message: 'vehicle_id not found' });
+    }
+    if (vehicleResult.rows[0].CustomerId !== request.requested_user_id) {
+      throw new RpcException({ code: status.PERMISSION_DENIED, message: 'vehicle_id does not belong to requested_user_id' });
+    }
+
+    // Rule 6 — dealership_id must exist in Dealership, IsActive = true
+    const dealershipResult = await this.pool.query<{ Id: string }>(
+      'SELECT "Id" FROM "Dealership" WHERE "Id" = $1 AND "IsActive" = true',
+      [request.dealership_id],
+    );
+    if (dealershipResult.rows.length === 0) {
+      throw new RpcException({ code: status.NOT_FOUND, message: 'dealership_id not found or inactive' });
+    }
+
+    // Rule 7 — workshop_service_id must exist in WorkshopService, IsActive = true; returns Duration and RequiredTechLevel
+    const serviceResult = await this.pool.query<WorkshopServiceRow>(
+      'SELECT "Id", "Duration", "RequiredTechLevel" FROM "WorkshopService" WHERE "Id" = $1 AND "IsActive" = true',
+      [request.workshop_service_id],
+    );
+    if (serviceResult.rows.length === 0) {
+      throw new RpcException({ code: status.NOT_FOUND, message: 'workshop_service_id not found or inactive' });
+    }
+
+    return serviceResult.rows[0];
   }
 
   /**

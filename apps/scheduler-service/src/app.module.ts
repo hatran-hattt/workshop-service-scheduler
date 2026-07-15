@@ -1,9 +1,22 @@
 import { Module } from '@nestjs/common';
+import { Pool } from 'pg';
 import { SchedulerController } from './scheduler.controller';
-import { CreateAppointmentService } from './create-appointment/create-appointment.service';
+import { CreateAppointmentService, PG_POOL } from './create-appointment/create-appointment.service';
 
 @Module({
   controllers: [SchedulerController],
-  providers: [CreateAppointmentService],
+  providers: [
+    {
+      provide: PG_POOL,
+      useFactory: () => new Pool({
+        host: process.env.POSTGRES_HOST ?? 'localhost',
+        port: Number(process.env.POSTGRES_PORT ?? 5432),
+        database: process.env.POSTGRES_DB ?? 'workshop_scheduler',
+        user: process.env.POSTGRES_USER ?? 'workshop',
+        password: process.env.POSTGRES_PASSWORD ?? 'workshop_secret',
+      }),
+    },
+    CreateAppointmentService,
+  ],
 })
 export class AppModule {}

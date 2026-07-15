@@ -16,6 +16,20 @@
  *     - start_time.seconds is NaN
  *   Error — Rule 3: requested_user_id missing
  *     - requested_user_id missing
+ *
+ * validateExistenceAndOwnership
+ *   Success
+ *     - all entities exist, active, and vehicle belongs to requesting user
+ *   Error — Rule 4: vehicle not found
+ *     - vehicle_id not found in Vehicle table
+ *   Error — Rule 5: vehicle ownership mismatch
+ *     - vehicle found but CustomerId does not match requested_user_id
+ *   Error — Rule 6: dealership not found or inactive
+ *     - dealership_id not found in Dealership table
+ *     - dealership exists but IsActive = false
+ *   Error — Rule 7: workshop service not found or inactive
+ *     - workshop_service_id not found in WorkshopService table
+ *     - workshop service exists but IsActive = false
  */
 
 import { RpcException } from '@nestjs/microservices';
@@ -25,10 +39,14 @@ import { CreateAppointmentRequest } from '../scheduler.types';
 
 describe('CreateAppointmentService', () => {
   let service: CreateAppointmentService;
+  let mockPool: { query: jest.Mock };
 
   beforeEach(() => {
-    service = new CreateAppointmentService();
+    mockPool = { query: jest.fn() };
+    service = new CreateAppointmentService(mockPool as any);
   });
+
+  // ─── validateFormat ────────────────────────────────────────────────────────
 
   describe('validateFormat', () => {
     const valid: CreateAppointmentRequest = {
@@ -89,6 +107,90 @@ describe('CreateAppointmentService', () => {
     describe('Rule 3 — requested_user_id must be present', () => {
       it('throws INVALID_ARGUMENT when requested_user_id is missing', () => {
         expectInvalidArgument({ ...valid, requested_user_id: '' });
+      });
+    });
+  });
+
+  // ─── validateExistenceAndOwnership ────────────────────────────────────────
+
+  describe('validateExistenceAndOwnership', () => {
+    const valid: CreateAppointmentRequest = {
+      vehicle_id: '00000000-0000-0000-0000-000000000001',
+      dealership_id: '00000000-0000-0000-0000-000000000002',
+      workshop_service_id: '00000000-0000-0000-0000-000000000003',
+      start_time: { seconds: 9_999_999_999, nanos: 0 },
+      requested_user_id: 'user-abc',
+    };
+
+    const vehicleRow = { rows: [{ CustomerId: 'user-abc' }] };
+    const dealershipRow = { rows: [{ Id: '00000000-0000-0000-0000-000000000002' }] };
+    const serviceRow = { rows: [{ Id: '00000000-0000-0000-0000-000000000003', Duration: 60, RequiredTechLevel: 2 }] };
+    const emptyResult = { rows: [] };
+
+    function expectError(code: number): (req: CreateAppointmentRequest) => Promise<void> {
+      return async (req) => {
+        let thrown: unknown;
+        try { await service.validateExistenceAndOwnership(req); } catch (e) { thrown = e; }
+        expect(thrown).toBeInstanceOf(RpcException);
+        expect((thrown as RpcException).getError()).toMatchObject({ code });
+      };
+    }
+
+    it('returns WorkshopService row when all entities exist and are valid', async () => {
+      mockPool.query
+        .mockResolvedValueOnce(vehicleRow)
+        .mockResolvedValueOnce(dealershipRow)
+        .mockResolvedValueOnce(serviceRow);
+
+      const result = await service.validateExistenceAndOwnership(valid);
+      expect(result).toMatchObject({ Id: '00000000-0000-0000-0000-000000000003', Duration: 60, RequiredTechLevel: 2 });
+    });
+
+    describe('Rule 4 — vehicle_id must exist in Vehicle', () => {
+      it('throws NOT_FOUND when vehicle_id not found', async () => {
+        mockPool.query.mockResolvedValueOnce(emptyResult);
+        await expectError(status.NOT_FOUND)(valid);
+      });
+    });
+
+    describe('Rule 5 — vehicle_id must belong to requested_user_id', () => {
+      it('throws PERMISSION_DENIED when vehicle belongs to a different user', async () => {
+        mockPool.query.mockResolvedValueOnce({ rows: [{ CustomerId: 'other-user' }] });
+        await expectError(status.PERMISSION_DENIED)(valid);
+      });
+    });
+
+    describe('Rule 6 — dealership_id must exist in Dealership, IsActive = true', () => {
+      it('throws NOT_FOUND when dealership_id not found', async () => {
+        mockPool.query
+          .mockResolvedValueOnce(vehicleRow)
+          .mockResolvedValueOnce(emptyResult);
+        await expectError(status.NOT_FOUND)(valid);
+      });
+
+      it('throws NOT_FOUND when dealership exists but IsActive = false', async () => {
+        mockPool.query
+          .mockResolvedValueOnce(vehicleRow)
+          .mockResolvedValueOnce(emptyResult); // IsActive=false filtered out by WHERE clause
+        await expectError(status.NOT_FOUND)(valid);
+      });
+    });
+
+    describe('Rule 7 — workshop_service_id must exist in WorkshopService, IsActive = true', () => {
+      it('throws NOT_FOUND when workshop_service_id not found', async () => {
+        mockPool.query
+          .mockResolvedValueOnce(vehicleRow)
+          .mockResolvedValueOnce(dealershipRow)
+          .mockResolvedValueOnce(emptyResult);
+        await expectError(status.NOT_FOUND)(valid);
+      });
+
+      it('throws NOT_FOUND when workshop service exists but IsActive = false', async () => {
+        mockPool.query
+          .mockResolvedValueOnce(vehicleRow)
+          .mockResolvedValueOnce(dealershipRow)
+          .mockResolvedValueOnce(emptyResult); // IsActive=false filtered out by WHERE clause
+        await expectError(status.NOT_FOUND)(valid);
       });
     });
   });
