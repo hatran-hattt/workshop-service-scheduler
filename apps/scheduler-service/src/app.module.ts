@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleDestroy, Inject } from '@nestjs/common';
 import { Pool } from 'pg';
 import { SchedulerController } from './scheduler.controller';
 import { CreateAppointmentService, PG_POOL } from './create-appointment/create-appointment.service';
@@ -19,4 +19,10 @@ import { CreateAppointmentService, PG_POOL } from './create-appointment/create-a
     CreateAppointmentService,
   ],
 })
-export class AppModule {}
+export class AppModule implements OnModuleDestroy {
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end();
+  }
+}

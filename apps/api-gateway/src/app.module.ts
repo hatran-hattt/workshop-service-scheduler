@@ -15,6 +15,7 @@ import { AppointmentsController } from './appointments/appointments.controller';
             protoPath: join(__dirname, '../../../proto/scheduler.proto'),
             url: `${process.env.SCHEDULER_GRPC_HOST ?? 'localhost'}:${process.env.SCHEDULER_GRPC_PORT ?? '5000'}`,
             loader: {
+              keepCase: true, // preserve snake_case field names so request/response objects match proto field names
               longs: Number,
               enums: String,
               includeDirs: [join(__dirname, '../../../proto')],
