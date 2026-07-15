@@ -1,0 +1,32 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-workshop_scheduler}
+      POSTGRES_USER: ${POSTGRES_USER:-workshop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-workshop_secret}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-workshop} -d ${POSTGRES_DB:-workshop_scheduler}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

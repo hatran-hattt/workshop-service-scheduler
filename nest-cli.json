@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "monorepo": true,
+  "root": "apps/api-gateway",
+  "sourceRoot": "apps/api-gateway/src",
+  "compilerOptions": {
+    "deleteOutDir": true
+  },
+  "projects": {
+    "api-gateway": {
+      "type": "application",
+      "root": "apps/api-gateway",
+      "entryFile": "main",
+      "sourceRoot": "apps/api-gateway/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/api-gateway/tsconfig.app.json"
+      }
+    },
+    "scheduler-service": {
+      "type": "application",
+      "root": "apps/scheduler-service",
+      "entryFile": "main",
+      "sourceRoot": "apps/scheduler-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/scheduler-service/tsconfig.app.json"
+      }
+    }
+  }
+}

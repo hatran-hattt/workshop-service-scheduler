@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package scheduler;
+
+// Placeholder — replaced with the full CreateAppointment definition in Phase 2.1.
+// See docs/detail_design/DD_Scheduler_Service_CreateAppointment.md, Section 2.2.
+service SchedulerService {
+  rpc Ping (PingRequest) returns (PingResponse);
+}
+
+message PingRequest {}
+message PingResponse {
+  string message = 1;
+}
