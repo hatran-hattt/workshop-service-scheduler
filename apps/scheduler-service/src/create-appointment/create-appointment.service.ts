@@ -33,6 +33,14 @@ export interface WorkshopServiceScheduleRow {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const SLOT_MINUTES = 15;
+const BOOKING_BUFFER_MINUTES = 15;
+const BOOKING_HORIZON_MONTHS = 1;
+const BUSINESS_CLOSE_HOUR = 18;
+const LUNCH_START_HOUR = 12;
+const LUNCH_END_HOUR = 13;
+const LUNCH_DURATION_MINUTES = 60;
+
 interface BookSlotParams {
   vehicleId: string;
   dealershipId: string;
@@ -160,11 +168,54 @@ export class CreateAppointmentService {
    * Validates start_time window rules and computes end_time.
    * @throws INVALID_ARGUMENT if any window rule fails.
    */
-  validateTimeWindowAndComputeEndTime(
-    _startTime: Date,
-    _durationMinutes: number,
-  ): Date {
-    throw new RpcException({ code: status.UNIMPLEMENTED, message: 'stub' });
+  validateTimeWindowAndComputeEndTime(startTime: Date, durationMinutes: number): Date {
+    const now = new Date();
+
+    // Rule 8 — start_time must align to a 15-minute slot boundary
+    if (startTime.getUTCMinutes() % SLOT_MINUTES !== 0 || startTime.getUTCSeconds() !== 0 || startTime.getUTCMilliseconds() !== 0) {
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'start_time must align to a 15-minute slot boundary' });
+    }
+
+    // Rule 9 — start_time must be > 15 minutes from current time
+    if (startTime.getTime() <= now.getTime() + BOOKING_BUFFER_MINUTES * 60 * 1000) {
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'start_time must be more than 15 minutes from now' });
+    }
+
+    // Rule 10 — start_time must fall within a date ≤ 1 month from today
+    const todayUtc = new Date(now);
+    todayUtc.setUTCHours(0, 0, 0, 0);
+    const horizonDate = new Date(todayUtc);
+    horizonDate.setUTCMonth(horizonDate.getUTCMonth() + BOOKING_HORIZON_MONTHS);
+    const startDateUtc = new Date(startTime);
+    startDateUtc.setUTCHours(0, 0, 0, 0);
+    if (startDateUtc > horizonDate) {
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'start_time must be within 1 month from today' });
+    }
+
+    // Rule 11 — start_time must not fall within the lunch break (12:00–13:00)
+    const startHour = startTime.getUTCHours();
+    if (startHour >= LUNCH_START_HOUR && startHour < LUNCH_END_HOUR) {
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'start_time must not fall within the lunch break (12:00–13:00)' });
+    }
+
+    // Rule 12 — compute end_time; extend by LUNCH_DURATION_MINUTES if the appointment spans into
+    // the lunch break (start before 12:00 and raw end strictly after 12:00 — raw end at 12:00 exactly
+    // does not trigger extension). Reject if the final end_time exceeds business close (18:00).
+    const rawEnd = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+    const lunchStart = new Date(startTime);
+    lunchStart.setUTCHours(LUNCH_START_HOUR, 0, 0, 0);
+    const spansLunch = startTime < lunchStart && rawEnd > lunchStart;
+    const endTime = spansLunch
+      ? new Date(rawEnd.getTime() + LUNCH_DURATION_MINUTES * 60 * 1000)
+      : rawEnd;
+
+    const closingTime = new Date(startTime);
+    closingTime.setUTCHours(BUSINESS_CLOSE_HOUR, 0, 0, 0);
+    if (endTime > closingTime) {
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: 'computed end_time exceeds business hours (18:00)' });
+    }
+
+    return endTime;
   }
 
   /**

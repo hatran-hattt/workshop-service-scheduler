@@ -28,6 +28,26 @@
  *     - dealership_id not found in Dealership table
  *     - dealership exists but IsActive = false
  *   Error — Rule 7: workshop service not found or inactive
+ *
+ * validateTimeWindowAndComputeEndTime
+ *   Success
+ *     - valid mid-morning slot, no lunch overlap
+ *     - raw end_time exactly at 12:00 (no lunch extension)
+ *     - raw end spans lunch, extension lands exactly at 18:00 (boundary — passes)
+ *     - start in afternoon session (no lunch adjustment)
+ *   Error — Rule 8: start_time not on 15-minute slot boundary
+ *     - start_time minutes not divisible by 15
+ *   Error — Rule 9: start_time too close to now
+ *     - start_time exactly 15 minutes from now (boundary — fails, must be strictly >)
+ *     - start_time less than 15 minutes from now
+ *   Error — Rule 10: start_time beyond 1-month booking horizon
+ *     - start_time exactly 1 month from today (boundary — passes)
+ *     - start_time 1 month + 1 day from today (fails)
+ *   Error — Rule 11: start_time in lunch break
+ *     - start_time at 12:00
+ *     - start_time at 12:30
+ *   Error — Rule 12: computed end_time exceeds business hours
+ *     - raw end spans lunch, extension pushes end_time to 18:01 (fails)
  *     - workshop_service_id not found in WorkshopService table
  *     - workshop service exists but IsActive = false
  */
@@ -191,6 +211,100 @@ describe('CreateAppointmentService', () => {
           .mockResolvedValueOnce(dealershipRow)
           .mockResolvedValueOnce(emptyResult); // IsActive=false filtered out by WHERE clause
         await expectError(status.NOT_FOUND)(valid);
+      });
+    });
+  });
+
+  // ─── validateTimeWindowAndComputeEndTime ──────────────────────────────────
+
+  describe('validateTimeWindowAndComputeEndTime', () => {
+    // Fixed "now" well before the test dates so all 2024-01-15 slots are safely in the future.
+    // Rule 9 tests override this per-case to place "now" close to the slot under test.
+    const BASE_NOW = new Date('2024-01-14T08:00:00.000Z');
+
+    beforeAll(() => { jest.useFakeTimers(); });
+    afterAll(() => { jest.useRealTimers(); });
+    beforeEach(() => { jest.setSystemTime(BASE_NOW); });
+
+    function expectInvalidArgument(startTime: Date, duration: number): void {
+      let thrown: unknown;
+      try { service.validateTimeWindowAndComputeEndTime(startTime, duration); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(RpcException);
+      expect((thrown as RpcException).getError()).toMatchObject({ code: status.INVALID_ARGUMENT });
+    }
+
+    it('valid mid-morning slot, no lunch overlap', () => {
+      const start = new Date('2024-01-15T09:00:00.000Z');
+      const end = service.validateTimeWindowAndComputeEndTime(start, 60);
+      expect(end).toEqual(new Date('2024-01-15T10:00:00.000Z'));
+    });
+
+    it('raw end_time exactly at 12:00 does not trigger lunch extension', () => {
+      // start 09:00 + 180 min = 12:00 exactly; 12:00 > lunchStart(12:00) is false → no extension
+      const start = new Date('2024-01-15T09:00:00.000Z');
+      const end = service.validateTimeWindowAndComputeEndTime(start, 180);
+      expect(end).toEqual(new Date('2024-01-15T12:00:00.000Z'));
+    });
+
+    it('raw end spans lunch, extension lands exactly at 18:00 (boundary — passes)', () => {
+      // start 09:00 + 480 min = 17:00 raw; 17:00 > 12:00 → extend +60 → 18:00 ≤ 18:00 → passes
+      const start = new Date('2024-01-15T09:00:00.000Z');
+      const end = service.validateTimeWindowAndComputeEndTime(start, 480);
+      expect(end).toEqual(new Date('2024-01-15T18:00:00.000Z'));
+    });
+
+    it('start in afternoon session — no lunch adjustment applied', () => {
+      // start 13:00 is not < lunchStart(12:00) → spansLunch = false → no extension
+      const start = new Date('2024-01-15T13:00:00.000Z');
+      const end = service.validateTimeWindowAndComputeEndTime(start, 60);
+      expect(end).toEqual(new Date('2024-01-15T14:00:00.000Z'));
+    });
+
+    describe('Rule 8 — start_time must align to a 15-minute slot boundary', () => {
+      it('throws INVALID_ARGUMENT when start_time minutes are not divisible by 15', () => {
+        expectInvalidArgument(new Date('2024-01-15T09:10:00.000Z'), 60);
+      });
+    });
+
+    describe('Rule 9 — start_time must be > 15 minutes from current time', () => {
+      it('throws INVALID_ARGUMENT when start_time is exactly 15 minutes from now (boundary — strictly > required)', () => {
+        jest.setSystemTime(new Date('2024-01-15T09:00:00.000Z'));
+        expectInvalidArgument(new Date('2024-01-15T09:15:00.000Z'), 60);
+      });
+
+      it('throws INVALID_ARGUMENT when start_time is less than 15 minutes from now', () => {
+        jest.setSystemTime(new Date('2024-01-15T09:01:00.000Z')); // 09:15 is only 14 min away
+        expectInvalidArgument(new Date('2024-01-15T09:15:00.000Z'), 60);
+      });
+    });
+
+    describe('Rule 10 — start_time must be within 1 month from today', () => {
+      it('passes when start_time is exactly 1 month from today (boundary)', () => {
+        jest.setSystemTime(new Date('2024-01-14T08:00:00.000Z'));
+        const start = new Date('2024-02-14T09:00:00.000Z');
+        expect(() => service.validateTimeWindowAndComputeEndTime(start, 60)).not.toThrow();
+      });
+
+      it('throws INVALID_ARGUMENT when start_time is 1 month + 1 day from today', () => {
+        jest.setSystemTime(new Date('2024-01-14T08:00:00.000Z'));
+        expectInvalidArgument(new Date('2024-02-15T09:00:00.000Z'), 60);
+      });
+    });
+
+    describe('Rule 11 — start_time must not fall within the lunch break (12:00–13:00)', () => {
+      it('throws INVALID_ARGUMENT when start_time is at 12:00', () => {
+        expectInvalidArgument(new Date('2024-01-15T12:00:00.000Z'), 60);
+      });
+
+      it('throws INVALID_ARGUMENT when start_time is at 12:30', () => {
+        expectInvalidArgument(new Date('2024-01-15T12:30:00.000Z'), 60);
+      });
+    });
+
+    describe('Rule 12 — computed end_time must not exceed business hours (18:00)', () => {
+      it('throws INVALID_ARGUMENT when extension pushes end_time to 18:01', () => {
+        // start 09:00 + 481 min = 17:01 raw; 17:01 > 12:00 → extend +60 → 18:01 > 18:00 → fails
+        expectInvalidArgument(new Date('2024-01-15T09:00:00.000Z'), 481);
       });
     });
   });
