@@ -2,13 +2,41 @@ syntax = "proto3";
 
 package scheduler;
 
-// Placeholder — replaced with the full CreateAppointment definition in Phase 2.1.
-// See docs/detail_design/DD_Scheduler_Service_CreateAppointment.md, Section 2.2.
+import "google/protobuf/timestamp.proto";
+
+// see docs/detail_design/DD_Scheduler_Service_CreateAppointment.md, Section 2.2
 service SchedulerService {
-  rpc Ping (PingRequest) returns (PingResponse);
+  rpc CreateAppointment(CreateAppointmentRequest) returns (CreateAppointmentResponse);
 }
 
-message PingRequest {}
-message PingResponse {
-  string message = 1;
+message CreateAppointmentRequest {
+  string vehicle_id = 1;
+  string dealership_id = 2;
+  string workshop_service_id = 3;
+  google.protobuf.Timestamp start_time = 4;
+  string requested_user_id = 5;
 }
+
+message CreateAppointmentResponse {
+  Appointment appointment = 1;
+}
+
+message Appointment {
+  string id = 1;
+  string vehicle_id = 2;
+  string dealership_id = 3;
+  string workshop_service_id = 4;
+  string service_bay_id = 5;
+  string technician_id = 6;
+  google.protobuf.Timestamp start_time = 7;
+  google.protobuf.Timestamp end_time = 8;
+  AppointmentStatus status = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+enum AppointmentStatus {
+  APPOINTMENT_STATUS_UNSPECIFIED = 0;
+  APPOINTMENT_STATUS_CONFIRMED = 1;
+}
+
+

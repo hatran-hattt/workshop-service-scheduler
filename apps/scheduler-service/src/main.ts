@@ -11,6 +11,11 @@ async function bootstrap(): Promise<void> {
       package: 'scheduler',
       protoPath: join(__dirname, '../../../proto/scheduler.proto'),
       url: `${process.env.SCHEDULER_GRPC_HOST ?? '0.0.0.0'}:${process.env.SCHEDULER_GRPC_PORT ?? '5000'}`,
+      loader: {
+        longs: Number,
+        enums: String,
+        includeDirs: [join(__dirname, '../../../proto')],
+      },
     },
   });
   await app.listen();

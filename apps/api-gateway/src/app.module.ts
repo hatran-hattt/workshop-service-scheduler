@@ -14,6 +14,11 @@ import { AppointmentsController } from './appointments/appointments.controller';
             package: 'scheduler',
             protoPath: join(__dirname, '../../../proto/scheduler.proto'),
             url: `${process.env.SCHEDULER_GRPC_HOST ?? 'localhost'}:${process.env.SCHEDULER_GRPC_PORT ?? '5000'}`,
+            loader: {
+              longs: Number,
+              enums: String,
+              includeDirs: [join(__dirname, '../../../proto')],
+            },
           },
         }),
       },
