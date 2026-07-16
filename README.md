@@ -73,6 +73,14 @@ files, e.g.
 
 ### Steps
 
+**0. Reset to a clean DB** (skip on a first-ever run; needed on every re-run of this demo, since
+step 4 books the seeded Oil Change and a repeat booking would just hit `NO_AVAILABILITY` for that
+bay/slot — schema + fixtures only auto-run on a *fresh* Postgres volume):
+
+```bash
+docker compose down -v   # drops the postgres_data volume
+```
+
 **1. Start Postgres and Redis** (bootstraps schema + fixtures on a fresh volume, per above):
 
 ```bash
