@@ -13,11 +13,15 @@ Two components are implemented end-to-end:
 | **Scheduler Service** (`apps/scheduler-service`) | `SchedulerService.CreateAppointment` (gRPC) — business-rule validation, availability check, and the transactional booking itself (row-locking + a DB `EXCLUDE` constraint as a second guardrail against double-booking). |
 
 Everything else in the wider platform (real Identity Provider, event broker/notifications,
-availability-cache read path, etc.) is out of scope — see `CLAUDE.md` for the exact scope
-boundary.
+availability-cache read path, etc.) is out of scope — see [`CLAUDE.md`](CLAUDE.md) for the exact
+scope boundary.
 
-Full design detail lives in `docs/` — start with `docs/DesignDocument.md`, then the two contracts
-in `docs/detail_design/`, and `docs/Design_Discussion_Log.md` for the reasoning behind
+Full design detail lives in [`docs/`](docs/) — start with
+[`docs/DesignDocument.md`](docs/DesignDocument.md), then the two contracts in
+[`docs/detail_design/`](docs/detail_design/)
+([`DD_API_Gateway_Appointments.md`](docs/detail_design/DD_API_Gateway_Appointments.md),
+[`DD_Scheduler_Service_CreateAppointment.md`](docs/detail_design/DD_Scheduler_Service_CreateAppointment.md)),
+and [`docs/Design_Discussion_Log.md`](docs/Design_Discussion_Log.md) for the reasoning behind
 non-obvious decisions.
 
 ---
@@ -49,9 +53,9 @@ npm run build:scheduler
 
 ### Mock data
 
-On a fresh Postgres volume, startup auto-runs `docker/init/01-schema.sql` (schema) and
-`docker/init/02-seed.sql` (fixtures) — there's nothing to seed manually. The fixture rows relevant
-to a first request are:
+On a fresh Postgres volume, startup auto-runs [`docker/init/01-schema.sql`](docker/init/01-schema.sql)
+(schema) and [`docker/init/02-seed.sql`](docker/init/02-seed.sql) (fixtures) — there's nothing to
+seed manually. The fixture rows relevant to a first request are:
 
 | Entity | `Id` | Notes |
 | --- | --- | --- |
@@ -62,9 +66,10 @@ to a first request are:
 | Vehicle | `50000000-0000-0000-0000-000000000001` | owned by `CustomerId = 'user-001'` |
 
 (Full fixture set — a second dealership, more technicians at `TechLevel` 2/3, and a longer
-`RequiredTechLevel = 3` service — is listed at the top of `docker/init/02-seed.sql` and mirrored as
-named constants in the test files, e.g.
-`apps/scheduler-service/src/create-appointment/concurrency.spec.ts`.)
+`RequiredTechLevel = 3` service — is listed at the top of
+[`docker/init/02-seed.sql`](docker/init/02-seed.sql) and mirrored as named constants in the test
+files, e.g.
+[`apps/scheduler-service/src/create-appointment/concurrency.spec.ts`](apps/scheduler-service/src/create-appointment/concurrency.spec.ts).)
 
 ### Steps
 
@@ -135,7 +140,8 @@ bay/technician pairing is now booked for that slot. Re-running with the *same* `
 returns the identical cached `201` response instead of creating a second appointment.
 
 Full request/response shapes and the complete error-code table are in
-`docs/detail_design/DD_API_Gateway_Appointments.md`, Section 2.
+[`docs/detail_design/DD_API_Gateway_Appointments.md`](docs/detail_design/DD_API_Gateway_Appointments.md),
+Section 2.
 
 ## Test
 
